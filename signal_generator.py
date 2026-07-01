@@ -26,6 +26,7 @@ from database import (
     count_completed_trades, load_all_trades_for_training,
     log_evaluation,
 )
+from backtest import run_backtest
 
 logger = logging.getLogger(__name__)
 
@@ -64,19 +65,47 @@ class SignalGenerator:
             self.shared_state["candles_dirty"]           = False
             self.shared_state["is_ready"]                = True
 
-        acc = self.model.initial_train(df_ind)
-        logger.info(f"Model awal siap. Akurasi CV: {acc:.2%}")
+        # ── Backtest historis (hanya jika database kosong) ────────────────
+        bt_count = run_backtest(df_ind)
 
-        self.send_message(
-            f"🤖 *Bot XAUUSD Signal Aktif!*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 Data historis : `{len(df)}` candle\n"
-            f"🎯 Akurasi CV    : `{acc:.1%}`\n"
-            f"⏱ Timeframe     : `5 Menit`\n"
-            f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Gunakan /stats untuk statistik\n"
-            f"/ping untuk cek status bot"
-        )
+        # ── Latih model: pakai data backtest jika cukup, fallback ke simulasi
+        trades      = load_all_trades_for_training()
+        use_backtest = bt_count > 0 and len(trades) >= 20
+
+        if use_backtest:
+            acc  = self.model.retrain(trades)
+            wins   = sum(1 for t in trades if t["outcome"] == "WIN")
+            losses = len(trades) - wins
+            wr     = wins / len(trades) * 100
+
+            self.send_message(
+                f"🤖 *Bot XAUUSD Signal Aktif!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 Data historis  : `{len(df)}` candle\n"
+                f"🔁 Backtest       : `{bt_count}` sinyal\n"
+                f"✅ WIN `{wins}` | ❌ LOSE `{losses}`\n"
+                f"📈 Win rate       : `{wr:.1f}%`\n"
+                f"⏱ Timeframe      : `5 Menit`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Model dilatih dari data historis\\.\n"
+                f"/stats untuk statistik | /ping untuk status"
+            )
+        else:
+            # Data backtest kurang dari 20 — pakai simulasi label biasa
+            acc = self.model.initial_train(df_ind)
+            extra = f" \\(backtest: `{bt_count}` sinyal\\)" if bt_count > 0 else ""
+            self.send_message(
+                f"🤖 *Bot XAUUSD Signal Aktif!*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📊 Data historis : `{len(df)}` candle{extra}\n"
+                f"🎯 Akurasi CV    : `{acc:.1%}`\n"
+                f"⏱ Timeframe     : `5 Menit`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"Gunakan /stats untuk statistik\n"
+                f"/ping untuk cek status bot"
+            )
+
+        logger.info("Model awal siap.")
 
     def start(self):
         """Mulai loop — hanya bisa dipanggil sekali."""
