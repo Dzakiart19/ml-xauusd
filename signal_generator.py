@@ -29,6 +29,7 @@ from database import (
     log_evaluation,
 )
 from backtest import run_backtest
+from bot import set_active_signal
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,11 @@ class SignalGenerator:
         use_backtest = bt_count > 0 and len(trades) >= 20
 
         if use_backtest:
-            acc  = self.model.retrain(trades)
+            acc    = self.model.retrain(trades)
             wins   = sum(1 for t in trades if t["outcome"] == "WIN")
             losses = len(trades) - wins
             wr     = wins / len(trades) * 100
+            log_evaluation(wr, len(trades), wins, losses)   # catat evaluasi awal
 
             self.send_message(
                 f"🤖 *Bot XAUUSD Signal Aktif!*\n"
@@ -213,6 +215,7 @@ class SignalGenerator:
 
         self._active_trade = None
         self._trade_db_id  = None
+        set_active_signal(None)
 
         # Cek retrain
         completed = count_completed_trades()
@@ -308,6 +311,7 @@ class SignalGenerator:
             "sl":          sl,
         }
         self._trade_db_id = trade_id
+        set_active_signal({**self._active_trade, "timestamp": trade_data["timestamp"]})
 
         logger.info(
             f"Sinyal {direction}: Entry={entry:.2f} TP={tp:.2f} SL={sl:.2f}"

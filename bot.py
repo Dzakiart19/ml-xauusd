@@ -48,6 +48,21 @@ def _format_uptime() -> str:
 # ─── Queue pesan keluar (thread-safe) ─────────────────────────────────────────
 _msg_queue: queue.Queue = queue.Queue()
 
+# ─── Sinyal aktif (diupdate oleh SignalGenerator) ─────────────────────────────
+_active_signal: dict | None = None
+_active_signal_lock = threading.Lock()
+
+
+def set_active_signal(trade: dict | None):
+    global _active_signal
+    with _active_signal_lock:
+        _active_signal = trade
+
+
+def get_active_signal() -> dict | None:
+    with _active_signal_lock:
+        return _active_signal
+
 
 def enqueue_message(text: str):
     """Dipanggil dari thread mana saja untuk broadcast ke semua chat terdaftar."""
@@ -100,9 +115,28 @@ def unregister_chat(chat_id: int):
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     register_chat(chat_id)
+
+    # Cek sinyal aktif
+    active = get_active_signal()
+    if active:
+        direction = active["direction"]
+        arrow     = "🟢" if direction == "BUY" else "🔴"
+        entry     = _escape_md(f"{active['entry_price']:.2f}")
+        tp        = _escape_md(f"{active['tp']:.2f}")
+        sl        = _escape_md(f"{active['sl']:.2f}")
+        since     = _escape_md(str(active.get("timestamp", ""))[:16].replace("T", " "))
+        signal_block = (
+            f"\n\n{arrow} *Sinyal Aktif Sekarang:*\n"
+            f"Arah: `{direction}` \\| Sejak: `{since} WIB`\n"
+            f"Entry `{entry}` ➜ TP `{tp}` SL `{sl}`"
+        )
+    else:
+        signal_block = "\n\n⏳ Tidak ada sinyal aktif saat ini\\."
+
     await update.message.reply_text(
         "✅ *Bot XAUUSD Signal aktif\\!*\n\n"
-        "Kamu akan menerima sinyal trading XAUUSD secara otomatis\\.\n\n"
+        "Kamu akan menerima sinyal trading XAUUSD secara otomatis\\."
+        f"{signal_block}\n\n"
         "Perintah yang tersedia:\n"
         "• /stats   – Statistik trading\n"
         "• /history – Riwayat 10 trade terakhir\n"

@@ -122,8 +122,16 @@ def get_stats() -> dict:
             SELECT timestamp, win_rate FROM evaluations ORDER BY id DESC LIMIT 1
         """).fetchone()
 
-        last_eval = eval_row["timestamp"] if eval_row else "Belum ada"
-        last_rate = eval_row["win_rate"]  if eval_row else 0.0
+        if eval_row:
+            last_eval = eval_row["timestamp"]
+            last_rate = eval_row["win_rate"]
+        elif total > 0:
+            # Belum ada evaluasi formal — tampilkan data dari trades
+            last_eval = "Data awal (backtest)"
+            last_rate = round(rate, 2)
+        else:
+            last_eval = "Belum ada"
+            last_rate = 0.0
 
         return {
             "total":     total,
