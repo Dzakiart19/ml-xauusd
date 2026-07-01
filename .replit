@@ -28,3 +28,11 @@ args = "python main.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["python", "main.py"]
+
+[[ports]]
+localPort = 8080
+externalPort = 80

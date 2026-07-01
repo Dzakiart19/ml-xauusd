@@ -9,6 +9,7 @@ ensure_websocket_client()
 
 import logging
 import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from config import LOG_FORMAT, LOG_LEVEL
 from database import init_db
@@ -30,6 +31,26 @@ logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
 
+# ─── Health Check Server ──────────────────────────────────────────────────────
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, *args):
+        pass  # Suppress request logs
+
+
+def _start_health_server(port: int = 8080):
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    t = threading.Thread(target=server.serve_forever, name="HealthCheck", daemon=True)
+    t.start()
+    logger.info(f"Health check server berjalan di port {port}")
+
+
 def main():
     logger.info("═" * 50)
     logger.info("  Bot XAUUSD Signal dimulai")
@@ -37,6 +58,9 @@ def main():
 
     # 1. Inisialisasi database
     init_db()
+
+    # 1b. Health check endpoint untuk cronjob/uptime monitor
+    _start_health_server(port=8080)
 
     # 2. Shared state antar thread
     shared_state = {
