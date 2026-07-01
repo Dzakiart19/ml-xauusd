@@ -2,9 +2,6 @@
 model.joblib
 scaler.joblib
 
-# Database
-trades.db
-
 # Uploaded assets
 attached_assets/
 
