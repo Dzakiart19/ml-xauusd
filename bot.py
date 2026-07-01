@@ -173,7 +173,12 @@ async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"   Pips: `{pips_sign}{pip_s}`"
         )
 
-    lines.append("━━━━━━━━━━━━━━━━━━━━━")
+    wins   = sum(1 for t in trades if t["outcome"] == "WIN")
+    losses = len(trades) - wins
+    lines.append(
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ WIN `{wins}` \\| ❌ LOSE `{losses}` \\| Total `{len(trades)}`"
+    )
     await update.message.reply_text(
         "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN_V2,
