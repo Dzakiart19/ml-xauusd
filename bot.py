@@ -12,7 +12,7 @@ import threading
 
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import Conflict, NetworkError, RetryAfter
+from telegram.error import Conflict, InvalidToken, NetworkError, RetryAfter
 from telegram.ext import (
     Application, ApplicationBuilder,
     CommandHandler, ContextTypes,
@@ -176,7 +176,13 @@ def build_application() -> Application:
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN tidak ditemukan di environment!")
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("stop",  cmd_stop))
@@ -206,10 +212,13 @@ def run_bot():
             app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES,
-                connect_timeout=30,
-                read_timeout=30,
             )
             break   # Keluar normal (mis. KeyboardInterrupt)
+
+        except (ValueError, InvalidToken) as e:
+            # Konfigurasi fatal (mis. token kosong atau tidak valid) — jangan retry
+            logger.critical(f"Token bot tidak valid atau tidak ditemukan: {e}. Bot dihentikan.")
+            raise
 
         except Conflict:
             logger.warning(

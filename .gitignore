@@ -1,0 +1,14 @@
+# Model artifacts (binary, regenerated at runtime)
+model.joblib
+scaler.joblib
+
+# Database
+trades.db
+
+# Uploaded assets
+attached_assets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
