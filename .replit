@@ -30,7 +30,7 @@ args = "python main.py"
 outputType = "console"
 
 [deployment]
-deploymentTarget = "vm"
+deploymentTarget = "cloudrun"
 run = ["python", "main.py"]
 
 [[ports]]
