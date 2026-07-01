@@ -161,6 +161,23 @@ def load_all_trades_for_training():
         conn.close()
 
 
+def get_trade_history(limit: int = 10) -> list:
+    """Ambil N trade terakhir yang sudah selesai."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT timestamp, direction, entry_price, tp, sl,
+                   outcome, pips, ensemble_score, ml_proba
+            FROM trades
+            WHERE outcome IS NOT NULL
+            ORDER BY id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def log_evaluation(win_rate: float, total: int, wins: int, losses: int):
     conn = get_connection()
     try:

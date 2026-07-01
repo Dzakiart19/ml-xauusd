@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 from config import TELEGRAM_TOKEN, CHAT_IDS_FILE
-from database import get_stats
+from database import get_stats, get_trade_history
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +102,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "✅ *Bot XAUUSD Signal aktif\\!*\n\n"
         "Kamu akan menerima sinyal trading XAUUSD secara otomatis\\.\n\n"
         "Perintah yang tersedia:\n"
-        "• /stats – Statistik trading\n"
-        "• /ping  – Cek status bot\n"
-        "• /stop  – Berhenti menerima sinyal",
+        "• /stats   – Statistik trading\n"
+        "• /history – Riwayat 10 trade terakhir\n"
+        "• /ping    – Cek status bot\n"
+        "• /stop    – Berhenti menerima sinyal",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
     logger.info(f"Chat {chat_id} terdaftar.")
@@ -128,6 +129,43 @@ async def cmd_ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"🕐 Aktif sejak : `{start_str}`\n"
         f"⏱ Uptime      : `{uptime}`",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
+
+
+async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    trades = get_trade_history(limit=10)
+    if not trades:
+        await update.message.reply_text(
+            "📭 Belum ada riwayat trade\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    lines = ["📋 *Riwayat 10 Trade Terakhir*\n━━━━━━━━━━━━━━━━━━━━━"]
+    for t in trades:
+        emoji     = "✅" if t["outcome"] == "WIN" else "❌"
+        arrow     = "🟢" if t["direction"] == "BUY" else "🔴"
+        pips_sign = "+" if t["outcome"] == "WIN" else "-"
+        pips      = abs(t["pips"] or 0)
+
+        # Ambil tanggal saja (potong bagian waktu)
+        ts = str(t["timestamp"])[:10]
+
+        entry = f"{t['entry_price']:.2f}".replace(".", "\\.")
+        tp    = f"{t['tp']:.2f}".replace(".", "\\.")
+        sl    = f"{t['sl']:.2f}".replace(".", "\\.")
+        pip_s = f"{pips:.1f}".replace(".", "\\.")
+
+        lines.append(
+            f"{emoji} {arrow} `{t['direction']}` \\| {ts}\n"
+            f"   Entry `{entry}` → TP `{tp}` SL `{sl}`\n"
+            f"   Pips: `{pips_sign}{pip_s}`"
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━")
+    await update.message.reply_text(
+        "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
@@ -211,10 +249,11 @@ def build_application() -> Application:
         .build()
     )
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("stop",  cmd_stop))
-    app.add_handler(CommandHandler("ping",  cmd_ping))
-    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("stop",    cmd_stop))
+    app.add_handler(CommandHandler("ping",    cmd_ping))
+    app.add_handler(CommandHandler("stats",   cmd_stats))
+    app.add_handler(CommandHandler("history", cmd_history))
     app.add_error_handler(error_handler)
 
     # Proses queue pesan keluar setiap 1 detik
