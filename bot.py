@@ -9,6 +9,7 @@ import logging
 import os
 import queue
 import threading
+from datetime import datetime, timezone
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -22,6 +23,25 @@ from config import TELEGRAM_TOKEN, CHAT_IDS_FILE
 from database import get_stats
 
 logger = logging.getLogger(__name__)
+
+# ─── Waktu mulai bot ──────────────────────────────────────────────────────────
+_BOT_START_TIME = datetime.now(timezone.utc)
+
+
+def _format_uptime() -> str:
+    delta = datetime.now(timezone.utc) - _BOT_START_TIME
+    total_seconds = int(delta.total_seconds())
+    days    = total_seconds // 86400
+    hours   = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    parts = []
+    if days:    parts.append(f"{days}h")
+    if hours:   parts.append(f"{hours}j")
+    if minutes: parts.append(f"{minutes}m")
+    parts.append(f"{seconds}d")
+    return " ".join(parts)
+
 
 # ─── Queue pesan keluar (thread-safe) ─────────────────────────────────────────
 _msg_queue: queue.Queue = queue.Queue()
@@ -101,8 +121,15 @@ async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🟢 Bot berjalan normal\\! Pong 🏓",
-                                    parse_mode=ParseMode.MARKDOWN_V2)
+    start_str = _BOT_START_TIME.strftime("%Y\\-%m\\-%d %H:%M UTC")
+    uptime    = _format_uptime()
+    await update.message.reply_text(
+        f"🟢 *Bot berjalan normal\\!* Pong 🏓\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🕐 Aktif sejak : `{start_str}`\n"
+        f"⏱ Uptime      : `{uptime}`",
+        parse_mode=ParseMode.MARKDOWN_V2,
+    )
 
 
 async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
