@@ -1,0 +1,6 @@
+python-telegram-bot[job-queue]
+websocket-client
+pandas
+scikit-learn
+numpy
+joblib
