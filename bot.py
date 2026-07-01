@@ -135,6 +135,13 @@ async def cmd_ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _escape_md(text: str) -> str:
+    """Escape semua karakter khusus MarkdownV2."""
+    for ch in r"_*[]()~`>#+-=|{}.!":
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     trades = get_trade_history(limit=10)
     if not trades:
@@ -148,20 +155,21 @@ async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for t in trades:
         emoji     = "✅" if t["outcome"] == "WIN" else "❌"
         arrow     = "🟢" if t["direction"] == "BUY" else "🔴"
-        pips_sign = "+" if t["outcome"] == "WIN" else "-"
+        pips_sign = "\\+" if t["outcome"] == "WIN" else "\\-"
         pips      = abs(t["pips"] or 0)
 
-        # Ambil tanggal saja (potong bagian waktu)
-        ts = str(t["timestamp"])[:10]
+        # Tanggal + jam WIB dari timestamp
+        ts_raw = str(t["timestamp"])[:16].replace("T", " ")   # "2026-07-01 22:19"
+        ts     = _escape_md(ts_raw)
 
-        entry = f"{t['entry_price']:.2f}".replace(".", "\\.")
-        tp    = f"{t['tp']:.2f}".replace(".", "\\.")
-        sl    = f"{t['sl']:.2f}".replace(".", "\\.")
-        pip_s = f"{pips:.1f}".replace(".", "\\.")
+        entry = _escape_md(f"{t['entry_price']:.2f}")
+        tp    = _escape_md(f"{t['tp']:.2f}")
+        sl    = _escape_md(f"{t['sl']:.2f}")
+        pip_s = _escape_md(f"{pips:.1f}")
 
         lines.append(
-            f"{emoji} {arrow} `{t['direction']}` \\| {ts}\n"
-            f"   Entry `{entry}` → TP `{tp}` SL `{sl}`\n"
+            f"{emoji} {arrow} *{t['direction']}* \\| `{ts} WIB`\n"
+            f"   Entry `{entry}` ➜ TP `{tp}` SL `{sl}`\n"
             f"   Pips: `{pips_sign}{pip_s}`"
         )
 
