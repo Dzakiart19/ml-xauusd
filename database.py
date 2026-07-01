@@ -4,7 +4,9 @@ Manajemen database SQLite untuk pencatatan trade.
 
 import sqlite3
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+WIB = timezone(timedelta(hours=7))
 from config import DB_FILE
 
 logger = logging.getLogger(__name__)
@@ -184,7 +186,7 @@ def log_evaluation(win_rate: float, total: int, wins: int, losses: int):
         conn.execute("""
             INSERT INTO evaluations (timestamp, win_rate, total, wins, losses)
             VALUES (?, ?, ?, ?, ?)
-        """, (datetime.utcnow().isoformat(), win_rate, total, wins, losses))
+        """, (datetime.now(WIB).isoformat(), win_rate, total, wins, losses))
         conn.commit()
     finally:
         conn.close()

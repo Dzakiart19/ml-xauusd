@@ -9,7 +9,9 @@ import logging
 import os
 import queue
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+WIB = timezone(timedelta(hours=7))
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -25,11 +27,11 @@ from database import get_stats, get_trade_history
 logger = logging.getLogger(__name__)
 
 # ─── Waktu mulai bot ──────────────────────────────────────────────────────────
-_BOT_START_TIME = datetime.now(timezone.utc)
+_BOT_START_TIME = datetime.now(WIB)
 
 
 def _format_uptime() -> str:
-    delta = datetime.now(timezone.utc) - _BOT_START_TIME
+    delta = datetime.now(WIB) - _BOT_START_TIME
     total_seconds = int(delta.total_seconds())
     days    = total_seconds // 86400
     hours   = (total_seconds % 86400) // 3600
@@ -122,7 +124,7 @@ async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    start_str = _BOT_START_TIME.strftime("%Y\\-%m\\-%d %H:%M UTC")
+    start_str = _BOT_START_TIME.strftime("%Y\\-%m\\-%d %H:%M WIB")
     uptime    = _format_uptime()
     await update.message.reply_text(
         f"🟢 *Bot berjalan normal\\!* Pong 🏓\n"

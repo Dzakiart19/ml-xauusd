@@ -9,7 +9,9 @@ Generator sinyal trading XAUUSD.
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+WIB = timezone(timedelta(hours=7))
 
 import numpy as np
 import pandas as pd
@@ -273,11 +275,11 @@ class SignalGenerator:
             f"🛑 SL    : `{sl:.2f}`  (-{ATR_SL_MULTIPLIER}×ATR)\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 Ensemble: `{score_used}/10` | ML: `{ml_proba:.0%}`\n"
-            f"📏 ATR: `{atr:.2f}` | ⏰ `{datetime.now(timezone.utc).strftime('%H:%M UTC')}`"
+            f"📏 ATR: `{atr:.2f}` | ⏰ `{datetime.now(WIB).strftime('%H:%M WIB')}`"
         )
 
         trade_data = {
-            "timestamp":      datetime.now(timezone.utc).isoformat(),
+            "timestamp":      datetime.now(WIB).isoformat(),
             "direction":      direction,
             "entry_price":    entry,
             "tp":             tp,
