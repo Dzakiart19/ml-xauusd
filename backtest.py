@@ -18,7 +18,7 @@ from config import (
     ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER,
     MIN_ENSEMBLE_RATIO, LABEL_LOOKAHEAD, ATR_MIN_THRESHOLD,
 )
-from database import log_trade, update_trade_outcome, count_completed_trades
+from database import log_trade, update_trade_outcome, count_backtest_trades
 from ensemble import ensemble_vote, safe_get
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,8 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
     Hanya berjalan jika database masih kosong.
     Return jumlah trade yang dihasilkan.
     """
-    if count_completed_trades() > 0:
-        logger.info("Database sudah ada data — backtest dilewati.")
+    if count_backtest_trades() > 0:
+        logger.info("Data backtest sudah ada — backtest dilewati.")
         return 0
 
     logger.info("Memulai backtest historis...")
@@ -77,6 +77,7 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
     end_idx      = n - LABEL_LOOKAHEAD
     signal_count = 0
     active_until = -1
+    _results     = []   # track outcome setiap trade untuk laporan akurat
 
     for i in range(start_idx, end_idx):
         if i <= active_until:
@@ -144,15 +145,14 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
 
         trade_id = log_trade(trade_data)
         update_trade_outcome(trade_id, outcome, pips)
+        _results.append(outcome)
         signal_count += 1
         active_until = exit_idx
 
     if signal_count > 0:
-        from database import load_all_trades_for_training
-        trades = load_all_trades_for_training()
-        wins   = sum(1 for t in trades if t["outcome"] == "WIN"  and t.get("source") == "backtest")
-        losses = sum(1 for t in trades if t["outcome"] == "LOSE" and t.get("source") == "backtest")
-        wr     = wins / signal_count * 100 if signal_count > 0 else 0
+        wins   = sum(1 for r in _results if r == "WIN")
+        losses = sum(1 for r in _results if r == "LOSE")
+        wr     = wins / signal_count * 100
         logger.info(
             f"Backtest selesai: {signal_count} sinyal | "
             f"WIN {wins} | LOSE {losses} | Win rate: {wr:.1f}%"

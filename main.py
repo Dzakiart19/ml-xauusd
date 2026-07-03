@@ -12,7 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from config import LOG_FORMAT, LOG_LEVEL
-from database import init_db
+from database import init_db, reset_backtest_trades
 from deriv_client import DerivClient
 from signal_generator import SignalGenerator
 from bot import enqueue_message, run_bot
@@ -82,7 +82,9 @@ def main():
 
     # 4. Callback saat data historis siap
     def on_data_ready():
-        logger.info("Data historis siap. Melatih model awal...")
+        logger.info("Data historis siap. Reset data backtest lama...")
+        reset_backtest_trades()
+        logger.info("Memulai backtest 12 hari + pelatihan model awal...")
         signal_gen.initial_train()
         signal_gen.start()
 

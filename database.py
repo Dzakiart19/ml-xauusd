@@ -69,6 +69,12 @@ def init_db():
         _migrate_add_column(conn, "trades",      "trend_bull", "INTEGER DEFAULT 0")
         _migrate_add_column(conn, "evaluations", "source",     "TEXT    DEFAULT 'live'")
 
+        # ── Normalisasi: row lama yang source=NULL → 'live' (satu kali) ──
+        cur = conn.execute("UPDATE trades SET source='live' WHERE source IS NULL")
+        if cur.rowcount:
+            conn.commit()
+            logger.info(f"Normalisasi: {cur.rowcount} trade lama source=NULL → 'live'.")
+
         logger.info("Database diinisialisasi.")
     finally:
         conn.close()
@@ -194,6 +200,37 @@ def count_completed_trades() -> int:
         conn.close()
 
 
+def count_backtest_trades() -> int:
+    """Hitung trade backtest yang sudah selesai."""
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM trades "
+            "WHERE outcome IS NOT NULL AND source = 'backtest'"
+        ).fetchone()
+        return row["n"]
+    finally:
+        conn.close()
+
+
+def reset_backtest_trades():
+    """
+    Hapus semua trade backtest (source='backtest') dari database.
+    Trade live (source='live') TIDAK tersentuh sama sekali.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.execute("DELETE FROM trades WHERE source = 'backtest'")
+        conn.commit()
+        deleted = cur.rowcount
+        if deleted:
+            logger.info(f"Reset backtest: {deleted} trade lama dihapus.")
+        else:
+            logger.info("Reset backtest: tidak ada data lama.")
+    finally:
+        conn.close()
+
+
 def count_completed_live_trades() -> int:
     """Hitung trade live yang sudah selesai (untuk trigger retrain)."""
     conn = get_connection()
@@ -207,29 +244,44 @@ def count_completed_live_trades() -> int:
         conn.close()
 
 
+_LIVE_ONLY_THRESHOLD = 200   # live trade >= angka ini → backtest tidak dipakai
+
 def load_all_trades_for_training():
     """
-    Kembalikan list dict semua trade yang sudah selesai,
-    siap dipakai untuk melatih ulang model.
-    Prioritaskan trade live; sertakan backtest jika live < 30.
+    Kembalikan list dict semua trade yang sudah selesai, siap untuk training.
+
+    Policy:
+    - Belum ada live trade         → backtest saja (pure warmup)
+    - 1 – 199 live trade           → backtest + live×5 (live lebih berbobot)
+    - >= 200 live trade            → live saja (cukup data nyata; buang backtest)
+
+    Threshold 200 memastikan model tetap adaptif ke performa live terkini setelah
+    data live tumbuh besar, sekaligus memanfaatkan backtest saat data live masih sedikit.
     """
     conn = get_connection()
     try:
         live_rows = conn.execute("""
             SELECT * FROM trades
-            WHERE outcome IS NOT NULL AND (source = 'live' OR source IS NULL)
+            WHERE outcome IS NOT NULL AND source = 'live'
         """).fetchall()
 
         live_trades = [dict(r) for r in live_rows]
 
-        if len(live_trades) >= 30:
+        if len(live_trades) >= _LIVE_ONLY_THRESHOLD:
+            # Cukup data live — tidak perlu backtest lagi
             return live_trades
 
-        # Kurang data live — sertakan backtest sebagai warmup
-        all_rows = conn.execute("""
-            SELECT * FROM trades WHERE outcome IS NOT NULL
+        bt_rows = conn.execute("""
+            SELECT * FROM trades
+            WHERE outcome IS NOT NULL AND source = 'backtest'
         """).fetchall()
-        return [dict(r) for r in all_rows]
+        bt_trades = [dict(r) for r in bt_rows]
+
+        if not live_trades:
+            return bt_trades   # belum ada live sama sekali
+
+        # Gabungkan: live×5 agar model lebih menghargai data nyata vs backtest
+        return bt_trades + live_trades * 5
     finally:
         conn.close()
 

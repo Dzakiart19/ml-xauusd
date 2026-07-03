@@ -32,6 +32,17 @@ description: Threading model, shared state pattern, dan keputusan desain utama b
 3. ATR filter: skip jika ATR < ATR_MIN_THRESHOLD (0.5) — pasar terlalu flat
 4. ML konfirmasi: ml_proba >= ML_PROBA_THRESHOLD (0.58)
 
+## Backtest Reset Policy
+- `reset_backtest_trades()` hanya hapus `source='backtest'` — JANGAN tambah `OR source IS NULL`
+- `init_db()` menormalisasi NULL → 'live' sekali saat startup sebelum reset bisa dipanggil
+- Reset dipanggil di `main.on_data_ready()` setiap startup → backtest selalu fresh dari data terbaru
+- Deriv API memberikan max ~2710 candle @5-menit (~9.4 hari), bukan 3500 penuh (weekend/market close)
+
+## Training Policy
+- live < 200: backtest + live×5 (warmup backtest, live lebih berbobot)
+- live >= 200: live saja (cukup data nyata, buang backtest)
+- Threshold diatur via `_LIVE_ONLY_THRESHOLD = 200` di database.py
+
 ## Config Akurasi
 - TP = 2.5×ATR, SL = 1.0×ATR → R:R = 2.5:1
 - RF: 150 trees, max_depth=8
