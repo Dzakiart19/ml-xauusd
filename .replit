@@ -36,3 +36,8 @@ run = ["python", "main.py"]
 [[ports]]
 localPort = 8080
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+TELEGRAM_BOT_TOKEN = "8219457512:AAHviOB7vxgBW6sgTWTd-nEwY-Z5wIkBa3Q"
