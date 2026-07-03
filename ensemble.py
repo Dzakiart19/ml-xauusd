@@ -107,4 +107,35 @@ def ensemble_vote(row: pd.Series) -> tuple:
         total += 1
         bear += 1
 
+    # 11. Fair Value Gap (FVG) — Smart Money
+    fvg_b = row.get("fvg_bull", 0)
+    fvg_s = row.get("fvg_bear", 0)
+    if fvg_b or fvg_s:
+        total += 1
+        if fvg_b and not fvg_s:
+            bull += 1
+        elif fvg_s and not fvg_b:
+            bear += 1
+        # Jika keduanya 1 (konflik) → tidak dihitung (total tetap +1, tanpa poin)
+
+    # 12. Fibonacci Retracement — Smart Money
+    fib_b = row.get("fib_bull", 0)
+    fib_s = row.get("fib_bear", 0)
+    if fib_b or fib_s:
+        total += 1
+        if fib_b and not fib_s:
+            bull += 1
+        elif fib_s and not fib_b:
+            bear += 1
+
+    # 13. Supply & Demand Order Block — Smart Money
+    snd_b = row.get("snd_bull", 0)
+    snd_s = row.get("snd_bear", 0)
+    if snd_b or snd_s:
+        total += 1
+        if snd_b and not snd_s:
+            bull += 1
+        elif snd_s and not snd_b:
+            bear += 1
+
     return bull, bear, max(total, 1)

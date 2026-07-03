@@ -161,6 +161,13 @@ class XAUModel:
                 'bearish_cdl':      t.get('bearish_cdl', 0),
                 'sar_bull':         t.get('sar_bull', 0),
                 'trend_bull':       t.get('trend_bull',  0),
+                # Smart Money — default 0 untuk data lama (belum tersimpan di DB)
+                'fvg_bull':         t.get('fvg_bull', 0),
+                'fvg_bear':         t.get('fvg_bear', 0),
+                'fib_bull':         t.get('fib_bull', 0),
+                'fib_bear':         t.get('fib_bear', 0),
+                'snd_bull':         t.get('snd_bull', 0),
+                'snd_bear':         t.get('snd_bear', 0),
             }
             row = [col_map.get(feat, np.nan) for feat in feature_names]
             records.append(row)
