@@ -17,8 +17,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 CHAT_IDS_FILE  = "chat_ids.json"
 
 # ─── Machine Learning ─────────────────────────────────────────────────────────
-RF_N_ESTIMATORS = 100
-RF_MAX_DEPTH    = 10
+RF_N_ESTIMATORS = 150         # lebih banyak tree → lebih stabil
+RF_MAX_DEPTH    = 8           # lebih dangkal → kurangi overfitting
 MODEL_FILE      = "model.joblib"
 SCALER_FILE     = "scaler.joblib"
 
@@ -26,14 +26,21 @@ SCALER_FILE     = "scaler.joblib"
 RETRAIN_EVERY   = 50
 
 # ─── Signal Logic ─────────────────────────────────────────────────────────────
-ATR_TP_MULTIPLIER = 2.0     # TP = entry ± (ATR × 2)
-ATR_SL_MULTIPLIER = 1.5     # SL = entry ± (ATR × 1.5)
+ATR_TP_MULTIPLIER = 2.5     # TP = entry ± (ATR × 2.5)  ← R:R lebih baik
+ATR_SL_MULTIPLIER = 1.0     # SL = entry ± (ATR × 1.0)  ← R:R = 2.5:1
 
-# Minimum skor ensemble sebelum sinyal dikirim (dari max 10)
-MIN_ENSEMBLE_SCORE = 5
+# ATR minimum — jangan trade saat pasar terlalu flat/choppy
+ATR_MIN_THRESHOLD = 0.5
 
-# Interval cek sinyal (detik)
-SIGNAL_CHECK_INTERVAL = 5
+# Minimum rasio skor ensemble (dari total vote yang aktif)
+# 0.65 = butuh 65% suara majority sebelum sinyal dikirim
+MIN_ENSEMBLE_RATIO = 0.65
+
+# Minimum probabilitas ML untuk konfirmasi sinyal
+ML_PROBA_THRESHOLD = 0.58
+
+# Interval cek sinyal (detik) — dinaikkan agar tidak overlap dengan kalkulasi indikator
+SIGNAL_CHECK_INTERVAL = 10
 
 # Max candle ke depan untuk simulasi label awal
 LABEL_LOOKAHEAD = 50

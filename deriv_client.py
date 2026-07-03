@@ -27,9 +27,9 @@ class DerivClient:
         self.state_lock        = state_lock
         self.on_ready_callback = on_ready_callback
 
-        self.ws         = None
-        self._thread    = None
-        self._stop_evt  = threading.Event()
+        self.ws        = None
+        self._thread   = None
+        self._stop_evt = threading.Event()
 
         # Guard: on_ready hanya dipanggil sekali
         self._ready_called = False
@@ -39,7 +39,7 @@ class DerivClient:
         self._hist_req_id = 1   # ticks_history (subscribe=1 → dapat ohlc stream)
         self._tick_req_id = 2   # ticks (bid/ask real-time)
 
-        # Retry delay — instance variable agar reset setelah konek
+        # Retry delay — reset setelah berhasil konek
         self._retry_delay = 2
 
     # ─── Public ───────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ class DerivClient:
             "end": "latest",
             "granularity": GRANULARITY,
             "style": "candles",
-            "subscribe": 1,       # ← stream ohlc setelah candle baru tutup
+            "subscribe": 1,
             "req_id": self._hist_req_id,
         }
         self.ws.send(json.dumps(payload))
@@ -129,7 +129,7 @@ class DerivClient:
 
             df = self._parse_candles(candles)
             with self.state_lock:
-                self.shared_state["candles"]     = df
+                self.shared_state["candles"]       = df
                 self.shared_state["candles_dirty"] = True
 
             logger.info(f"Data historis diterima: {len(df)} candle.")
@@ -149,7 +149,6 @@ class DerivClient:
                     name="OnReadyCB",
                 ).start()
 
-            # Subscribe tick untuk TP/SL tracking
             self._subscribe_ticks()
 
         # ── OHLC update (candle baru / candle sedang terbentuk) ───────────
@@ -176,11 +175,11 @@ class DerivClient:
     def _handle_ohlc_update(self, ohlc: dict):
         """
         Update atau tambahkan candle di shared_state berdasarkan OHLC update.
-        Gunakan 'open_time' (epoch awal candle 5-menit) sebagai index,
-        BUKAN 'epoch' (waktu tick saat ini).
+        candles_dirty HANYA di-set True saat candle BARU muncul (bukan update
+        candle yang sedang terbentuk), agar kalkulasi indikator tidak
+        dipanggil terlalu sering dan tidak menyebabkan APScheduler warning.
         """
         try:
-            # open_time = epoch awal candle; epoch = waktu tick terkini
             open_time = ohlc.get("open_time") or ohlc.get("epoch")
             if not open_time:
                 return
@@ -200,21 +199,24 @@ class DerivClient:
                     return
 
                 if candle_idx in df.index:
-                    # Update candle yang sedang terbentuk (harga bergerak)
+                    # Update candle yang sedang terbentuk — JANGAN set dirty
+                    # (indikator tidak perlu dihitung ulang untuk candle belum close)
                     for col, val in new_row.items():
                         df.at[candle_idx, col] = val
+                    self.shared_state["candles"] = df
+                    # candles_dirty TIDAK diubah di sini
+
                 else:
-                    # Candle 5-menit baru dimulai
+                    # Candle 5-menit baru dimulai → set dirty untuk recalculate
                     new_df = pd.DataFrame([new_row], index=[candle_idx])
                     df = pd.concat([df, new_df])
                     if len(df) > CANDLE_COUNT:
                         df = df.iloc[-CANDLE_COUNT:]
+                    self.shared_state["candles"]       = df
+                    self.shared_state["candles_dirty"] = True   # ← hanya di sini
                     logger.info(
                         f"Candle baru [{candle_idx}] close={new_row['close']:.2f}"
                     )
-
-                self.shared_state["candles"]       = df
-                self.shared_state["candles_dirty"] = True
 
         except (KeyError, ValueError) as e:
             logger.warning(f"OHLC update tidak valid: {e} — data: {ohlc}")

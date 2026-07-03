@@ -1,0 +1,1 @@
+- [XAUUSD Bot Architecture](xauusd-bot-arch.md) — threading model, shared state pattern, dan keputusan desain utama bot sinyal

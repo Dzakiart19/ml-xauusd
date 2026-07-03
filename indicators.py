@@ -23,9 +23,9 @@ def calc_ema(series: pd.Series, period: int) -> pd.Series:
 
 
 def calc_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain  = delta.clip(lower=0)
-    loss  = (-delta).clip(lower=0)
+    delta    = series.diff()
+    gain     = delta.clip(lower=0)
+    loss     = (-delta).clip(lower=0)
     avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs  = avg_gain / avg_loss.replace(0, np.nan)
@@ -35,19 +35,19 @@ def calc_rsi(series: pd.Series, period: int = 14) -> pd.Series:
 
 def calc_macd(series: pd.Series,
               fast: int = 12, slow: int = 26, signal: int = 9):
-    ema_fast   = calc_ema(series, fast)
-    ema_slow   = calc_ema(series, slow)
-    macd_line  = ema_fast - ema_slow
+    ema_fast    = calc_ema(series, fast)
+    ema_slow    = calc_ema(series, slow)
+    macd_line   = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram  = macd_line - signal_line
+    histogram   = macd_line - signal_line
     return macd_line, signal_line, histogram
 
 
 def calc_bbands(series: pd.Series, period: int = 20, std_dev: float = 2.0):
-    sma    = series.rolling(window=period).mean()
-    std    = series.rolling(window=period).std(ddof=0)
-    upper  = sma + std_dev * std
-    lower  = sma - std_dev * std
+    sma   = series.rolling(window=period).mean()
+    std   = series.rolling(window=period).std(ddof=0)
+    upper = sma + std_dev * std
+    lower = sma - std_dev * std
     return upper, sma, lower
 
 
@@ -91,25 +91,11 @@ def calc_willr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 
 def calc_obv(df: pd.DataFrame) -> pd.Series:
-    direction = np.sign(df['close'].diff())
+    """OBV disertakan tapi TIDAK dipakai sebagai fitur ML (volume tidak riil)."""
+    direction     = np.sign(df['close'].diff())
     direction.iloc[0] = 0
     obv = (direction * df['volume']).cumsum()
     return obv
-
-
-def calc_mfi(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    tp  = (df['high'] + df['low'] + df['close']) / 3
-    mf  = tp * df['volume']
-    diff = tp.diff()
-
-    pos_mf = mf.where(diff > 0, 0.0)
-    neg_mf = mf.where(diff < 0, 0.0)
-
-    pos_sum = pos_mf.rolling(period).sum()
-    neg_sum = neg_mf.rolling(period).sum().replace(0, np.nan)
-
-    mfi = 100 - (100 / (1 + pos_sum / neg_sum))
-    return mfi
 
 
 def calc_stdev(series: pd.Series, period: int = 14) -> pd.Series:
@@ -124,31 +110,28 @@ def calc_psar(df: pd.DataFrame,
     Kembalikan (psar, is_bull) sebagai pd.Series.
     is_bull = True berarti harga di atas SAR (uptrend).
     """
-    high  = df['high'].values
-    low   = df['low'].values
-    n     = len(df)
+    high = df['high'].values
+    low  = df['low'].values
+    n    = len(df)
 
-    psar_arr  = np.full(n, np.nan)
-    is_bull   = np.ones(n, dtype=bool)
+    psar_arr = np.full(n, np.nan)
+    is_bull  = np.ones(n, dtype=bool)
 
-    # Inisialisasi
     psar_arr[0] = low[0]
-    hp = high[0]  # highest point dalam uptrend
-    lp = low[0]   # lowest  point dalam downtrend
+    hp = high[0]
+    lp = low[0]
     af = af_start
 
     for i in range(1, n):
         prev_bull = is_bull[i - 1]
 
         if prev_bull:
-            # --- uptrend ---
             psar_i = psar_arr[i - 1] + af * (hp - psar_arr[i - 1])
             psar_i = min(psar_i, low[i - 1])
             if i >= 2:
                 psar_i = min(psar_i, low[i - 2])
 
             if low[i] < psar_i:
-                # Balik ke downtrend
                 is_bull[i]  = False
                 psar_arr[i] = hp
                 lp = low[i]
@@ -160,14 +143,12 @@ def calc_psar(df: pd.DataFrame,
                     hp = high[i]
                     af = min(af + af_step, af_max)
         else:
-            # --- downtrend ---
             psar_i = psar_arr[i - 1] - af * (psar_arr[i - 1] - lp)
             psar_i = max(psar_i, high[i - 1])
             if i >= 2:
                 psar_i = max(psar_i, high[i - 2])
 
             if high[i] > psar_i:
-                # Balik ke uptrend
                 is_bull[i]  = True
                 psar_arr[i] = lp
                 hp = high[i]
@@ -187,14 +168,14 @@ def calc_psar(df: pd.DataFrame,
 # POLA CANDLESTICK MANUAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _body(o, c):       return abs(c - o)
+def _body(o, c):           return abs(c - o)
 def _upper_wick(o, h, c): return h - max(o, c)
 def _lower_wick(o, l, c): return min(o, c) - l
 
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
-    df    = df.copy()
-    n     = len(df)
+    df = df.copy()
+    n  = len(df)
     bulls = np.zeros(n, dtype=int)
     bears = np.zeros(n, dtype=int)
 
@@ -212,10 +193,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
 
         b, s = 0, 0
 
-        # Doji
-        if body / total < 0.1:
-            pass   # netral – tidak menambah skor
-
         # Hammer (bullish reversal)
         if body > 0 and lower >= 2 * body and upper <= 0.3 * body:
             b += 1
@@ -224,7 +201,7 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
         if c < o and body > 0 and upper >= 2 * body and lower <= 0.3 * body:
             s += 1
 
-        # Inverted Hammer (bullish, butuh konfirmasi)
+        # Inverted Hammer (bullish, konfirmasi dibutuhkan)
         if c > o and body > 0 and upper >= 2 * body and lower <= 0.3 * body:
             b += 1
 
@@ -250,9 +227,10 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
 
         # Pola tiga candle
         if i >= 2:
-            # Morning Star (bullish)
             f_o, f_c = O[i-2], C[i-2]
             m_o, m_c = O[i-1], C[i-1]
+
+            # Morning Star (bullish)
             if (f_c < f_o and
                     _body(m_o, m_c) < 0.3 * _body(f_o, f_c) and
                     c > o and c > (f_o + f_c) / 2):
@@ -281,7 +259,7 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Hitung semua indikator pada DataFrame OHLCV.
     Kolom minimal: open, high, low, close, volume
     """
-    df = df.copy()
+    df    = df.copy()
     close = df['close']
 
     # ── Trend ──────────────────────────────────────────────────────────────────
@@ -292,15 +270,15 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['EMA_50']  = calc_ema(close, 50)
 
     bb_upper, bb_mid, bb_lower = calc_bbands(close, 20)
-    df['BBU_20']  = bb_upper
-    df['BBM_20']  = bb_mid
-    df['BBL_20']  = bb_lower
+    df['BBU_20'] = bb_upper
+    df['BBM_20'] = bb_mid
+    df['BBL_20'] = bb_lower
 
     df['MACD'], df['MACD_signal'], df['MACDh_12_26_9'] = calc_macd(close)
 
     psar_vals, psar_bull = calc_psar(df)
-    df['PSAR']      = psar_vals
-    df['sar_bull']  = psar_bull.astype(int)
+    df['PSAR']     = psar_vals
+    df['sar_bull'] = psar_bull.astype(int)
 
     # ── Momentum ───────────────────────────────────────────────────────────────
     df['RSI_14']        = calc_rsi(close, 14)
@@ -311,25 +289,23 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['WILLR_14']      = calc_willr(df, 14)
 
     # ── Volatilitas ────────────────────────────────────────────────────────────
-    df['ATRr_14'] = calc_atr(df, 14)
+    df['ATRr_14']  = calc_atr(df, 14)
     df['STDEV_14'] = calc_stdev(close, 14)
 
-    # ── Volume ─────────────────────────────────────────────────────────────────
-    df['OBV']   = calc_obv(df)
-    df['MFI_14'] = calc_mfi(df, 14)
+    # ── Volume (volume=1.0 dari Deriv, hanya OBV — tidak dipakai di ML) ───────
+    df['OBV'] = calc_obv(df)
 
     # ── Candlestick Patterns ───────────────────────────────────────────────────
     df = detect_candlestick_patterns(df)
 
     # ── Kolom bantu ────────────────────────────────────────────────────────────
-    spread   = bb_upper - bb_lower
-    df['bb_pos'] = np.where(
-        spread > 0,
-        (close - bb_lower) / spread,
-        0.5
-    )
+    spread      = bb_upper - bb_lower
+    df['bb_pos'] = np.where(spread > 0, (close - bb_lower) / spread, 0.5)
 
     df['ema_cross'] = (df['EMA_10'] > df['EMA_21']).astype(int)
+
+    # Arah tren makro: 1 = harga di atas SMA200 (bullish), 0 = bearish
+    df['trend_bull'] = (close > df['SMA_200']).astype(int)
 
     # Forward fill NaN lalu backward fill sisa
     df.ffill(inplace=True)
@@ -344,6 +320,11 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_feature_names() -> list:
+    """
+    Fitur untuk Random Forest.
+    MFI dihapus (volume=1.0 tidak riil → sinyal palsu).
+    trend_bull ditambahkan (konteks tren makro SMA200).
+    """
     return [
         'RSI_14',
         'MACDh_12_26_9',
@@ -354,10 +335,10 @@ def get_feature_names() -> list:
         'STOCHd_14_3_3',
         'CCI_20_0.015',
         'WILLR_14',
-        'MFI_14',
         'bullish_cdl',
         'bearish_cdl',
         'sar_bull',
+        'trend_bull',
     ]
 
 

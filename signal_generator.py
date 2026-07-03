@@ -1,9 +1,9 @@
 """
 Generator sinyal trading XAUUSD.
 - Loop setiap SIGNAL_CHECK_INTERVAL detik
-- Hitung ulang indikator ketika ada candle baru (candles_dirty flag)
+- Hitung ulang indikator HANYA saat candle baru close (candles_dirty flag)
 - Lacak sinyal aktif (TP/SL) via tick real-time
-- Auto-retrain setiap RETRAIN_EVERY trade selesai
+- Auto-retrain setiap RETRAIN_EVERY trade live selesai
 """
 
 import logging
@@ -17,15 +17,16 @@ import numpy as np
 import pandas as pd
 
 from config import (
-    ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER,
-    MIN_ENSEMBLE_SCORE, SIGNAL_CHECK_INTERVAL,
-    RETRAIN_EVERY,
+    ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER, ATR_MIN_THRESHOLD,
+    MIN_ENSEMBLE_RATIO, ML_PROBA_THRESHOLD,
+    SIGNAL_CHECK_INTERVAL, RETRAIN_EVERY,
 )
+from ensemble import ensemble_vote, safe_get
 from indicators import calculate_indicators, extract_features
 from ml_model import XAUModel
 from database import (
     log_trade, update_trade_outcome,
-    count_completed_trades, load_all_trades_for_training,
+    count_completed_live_trades, load_all_trades_for_training,
     log_evaluation,
 )
 from backtest import run_backtest
@@ -37,18 +38,18 @@ logger = logging.getLogger(__name__)
 class SignalGenerator:
     def __init__(self, shared_state: dict, state_lock: threading.Lock,
                  send_message_fn):
-        self.shared_state    = shared_state
-        self.state_lock      = state_lock
-        self.send_message    = send_message_fn
+        self.shared_state = shared_state
+        self.state_lock   = state_lock
+        self.send_message = send_message_fn
 
-        self.model           = XAUModel()
-        self._stop_evt       = threading.Event()
-        self._started        = threading.Event()   # guard: start() sekali saja
-        self._thread         = None
+        self.model        = XAUModel()
+        self._stop_evt    = threading.Event()
+        self._started     = threading.Event()
+        self._thread      = None
 
         # Trade aktif
-        self._active_trade   = None
-        self._trade_db_id    = None
+        self._active_trade = None
+        self._trade_db_id  = None
 
     # ─── Public ───────────────────────────────────────────────────────────────
 
@@ -71,48 +72,48 @@ class SignalGenerator:
         # ── Backtest historis (hanya jika database kosong) ────────────────
         bt_count = run_backtest(df_ind)
 
-        # ── Latih model: pakai data backtest jika cukup, fallback ke simulasi
-        trades      = load_all_trades_for_training()
+        # ── Latih model ───────────────────────────────────────────────────
+        trades       = load_all_trades_for_training()
         use_backtest = bt_count > 0 and len(trades) >= 20
 
         if use_backtest:
-            acc    = self.model.retrain(trades)
-            wins   = sum(1 for t in trades if t["outcome"] == "WIN")
-            losses = len(trades) - wins
-            wr     = wins / len(trades) * 100
-            log_evaluation(wr, len(trades), wins, losses)   # catat evaluasi awal
+            acc  = self.model.retrain(trades)
+            wins = sum(1 for t in trades if t["outcome"] == "WIN"
+                       and t.get("source") == "backtest")
+            losses = sum(1 for t in trades if t["outcome"] == "LOSE"
+                         and t.get("source") == "backtest")
+            wr   = wins / bt_count * 100 if bt_count > 0 else 0
+            log_evaluation(wr, bt_count, wins, losses, source="backtest")
 
             self.send_message(
-                f"🤖 *Bot XAUUSD Signal Aktif!*\n"
+                f"🤖 *Bot XAUUSD Signal Aktif\\!*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📊 Data historis  : `{len(df)}` candle\n"
                 f"🔁 Backtest       : `{bt_count}` sinyal\n"
-                f"✅ WIN `{wins}` | ❌ LOSE `{losses}`\n"
-                f"📈 Win rate       : `{wr:.1f}%`\n"
+                f"✅ WIN `{wins}` \\| ❌ LOSE `{losses}`\n"
+                f"📈 Win rate BT    : `{wr:.1f}%`\n"
                 f"⏱ Timeframe      : `5 Menit`\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Model dilatih dari data historis\\.\n"
-                f"/stats untuk statistik | /ping untuk status"
+                f"Model dilatih dari data backtest\\.\n"
+                f"/stats untuk statistik live \\| /ping untuk status"
             )
         else:
-            # Data backtest kurang dari 20 — pakai simulasi label biasa
             acc = self.model.initial_train(df_ind)
             extra = f" \\(backtest: `{bt_count}` sinyal\\)" if bt_count > 0 else ""
             self.send_message(
-                f"🤖 *Bot XAUUSD Signal Aktif!*\n"
+                f"🤖 *Bot XAUUSD Signal Aktif\\!*\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📊 Data historis : `{len(df)}` candle{extra}\n"
                 f"🎯 Akurasi CV    : `{acc:.1%}`\n"
                 f"⏱ Timeframe     : `5 Menit`\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Gunakan /stats untuk statistik\n"
+                f"Gunakan /stats untuk statistik live\n"
                 f"/ping untuk cek status bot"
             )
 
         logger.info("Model awal siap.")
 
     def start(self):
-        """Mulai loop — hanya bisa dipanggil sekali."""
         if self._started.is_set():
             logger.warning("SignalGenerator sudah berjalan, start() diabaikan.")
             return
@@ -139,11 +140,11 @@ class SignalGenerator:
                     time.sleep(SIGNAL_CHECK_INTERVAL)
                     continue
 
-                # ── Hitung ulang indikator jika candle baru datang ─────────
+                # Hitung ulang indikator HANYA saat ada candle baru close
                 if dirty:
                     self._recalculate_indicators()
 
-                # ── Lacak trade aktif ──────────────────────────────────────
+                # Lacak trade aktif atau coba generate sinyal baru
                 if self._active_trade:
                     self._track_active_trade()
                 else:
@@ -171,7 +172,7 @@ class SignalGenerator:
         except Exception as e:
             logger.error(f"Gagal hitung ulang indikator: {e}", exc_info=True)
 
-    # ─── Lacak trade aktif ─────────────────────────────────────────────────────
+    # ─── Lacak trade aktif ────────────────────────────────────────────────────
 
     def _track_active_trade(self):
         with self.state_lock:
@@ -188,26 +189,26 @@ class SignalGenerator:
 
         hit = None
         if direction == "BUY":
-            if price >= tp:  hit = "WIN"
+            if price >= tp:   hit = "WIN"
             elif price <= sl: hit = "LOSE"
         else:
-            if price <= tp:  hit = "WIN"
+            if price <= tp:   hit = "WIN"
             elif price >= sl: hit = "LOSE"
 
         if not hit:
             return
 
-        pips  = abs(price - entry) / 0.1
+        pips = abs(price - entry) / 0.01   # 1 pip XAUUSD = $0.01
         sign  = "+" if hit == "WIN" else "-"
         emoji = "✅" if hit == "WIN" else "❌"
 
         self.send_message(
-            f"{emoji} *{hit}* — Trade Selesai!\n"
+            f"{emoji} *{hit}* — Trade Selesai\\!\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"Arah   : `{direction}` XAUUSD\n"
             f"Entry  : `{entry:.2f}`\n"
             f"Tutup  : `{price:.2f}`\n"
-            f"Pips   : `{sign}{abs(pips):.1f}`"
+            f"Pips   : `{sign}{pips:.0f}`"
         )
 
         if self._trade_db_id:
@@ -217,9 +218,9 @@ class SignalGenerator:
         self._trade_db_id  = None
         set_active_signal(None)
 
-        # Cek retrain
-        completed = count_completed_trades()
-        if completed > 0 and completed % RETRAIN_EVERY == 0:
+        # Trigger retrain berdasarkan trade LIVE saja
+        live_done = count_completed_live_trades()
+        if live_done > 0 and live_done % RETRAIN_EVERY == 0:
             threading.Thread(
                 target=self._auto_retrain, daemon=True, name="Retrain"
             ).start()
@@ -231,34 +232,62 @@ class SignalGenerator:
             df    = self.shared_state.get("candles_with_indicators")
             price = self.shared_state.get("current_price")
 
-        if df is None or df.empty or price is None:
+        if df is None or len(df) < 2 or price is None:
             return
 
-        last = df.iloc[-1]
+        # Gunakan candle TERAKHIR yang SUDAH CLOSE (bukan candle forming saat ini)
+        # iloc[-1] = candle sedang terbentuk, iloc[-2] = candle yang baru close
+        last  = df.iloc[-2]
+        close = float(safe_get(last, "close", np.nan))
 
-        # Ensemble voting
-        bull_score, bear_score = self._ensemble_vote(last)
+        # ── Ensemble voting ────────────────────────────────────────────────
+        bull, bear, total = ensemble_vote(last)
 
-        # ML prediction
-        features          = extract_features(df)
-        ml_label, ml_proba = self.model.predict(features.iloc[-1])
-        ml_bull = (ml_label == 1)
-        ml_bear = (ml_label == 0)
+        bull_ratio = bull / total
+        bear_ratio = bear / total
 
+        # ── Trend filter: SMA200 ───────────────────────────────────────────
+        # Hanya BUY jika harga di atas SMA200, hanya SELL jika di bawah
+        sma200     = safe_get(last, "SMA_200", np.nan)
+        trend_bull = 1 if (not np.isnan(sma200) and close > sma200) else 0
+
+        # ── ATR filter: jangan trade pasar flat ───────────────────────────
+        atr = float(safe_get(last, "ATRr_14", 0.0))
+        if np.isnan(atr) or atr <= 0:
+            atr = 1.0
+
+        if atr < ATR_MIN_THRESHOLD:
+            logger.debug(f"ATR terlalu kecil ({atr:.3f}) — skip sinyal.")
+            return
+
+        # ── Tentukan arah berdasarkan ensemble + trend ─────────────────────
         direction = None
-        if bull_score >= MIN_ENSEMBLE_SCORE and ml_bull:
+        if bull_ratio >= MIN_ENSEMBLE_RATIO and trend_bull == 1:
             direction = "BUY"
-        elif bear_score >= MIN_ENSEMBLE_SCORE and ml_bear:
+        elif bear_ratio >= MIN_ENSEMBLE_RATIO and trend_bull == 0:
             direction = "SELL"
 
         if direction is None:
             return
 
-        # ATR untuk TP/SL
-        atr = float(last.get("ATRr_14", 1.0))
-        if np.isnan(atr) or atr <= 0:
-            atr = 1.0
+        # ── Konfirmasi ML — gunakan closed candle (iloc[-2]) ──────────────────
+        features           = extract_features(df)
+        ml_label, ml_proba = self.model.predict(features.iloc[-2])
 
+        # Jika model belum siap (None) atau proba di bawah threshold → skip
+        if ml_label is None:
+            logger.debug("Model belum siap — sinyal ditunda.")
+            return
+
+        ml_confirms_buy  = (ml_label == 1 and ml_proba >= ML_PROBA_THRESHOLD)
+        ml_confirms_sell = (ml_label == 0 and ml_proba >= ML_PROBA_THRESHOLD)
+
+        if direction == "BUY"  and not ml_confirms_buy:
+            return
+        if direction == "SELL" and not ml_confirms_sell:
+            return
+
+        # ── Hitung TP / SL ─────────────────────────────────────────────────
         entry = price
         if direction == "BUY":
             tp = entry + ATR_TP_MULTIPLIER * atr
@@ -267,18 +296,18 @@ class SignalGenerator:
             tp = entry - ATR_TP_MULTIPLIER * atr
             sl = entry + ATR_SL_MULTIPLIER * atr
 
-        score_used = bull_score if direction == "BUY" else bear_score
+        score_used = bull if direction == "BUY" else bear
         arrow      = "🟢" if direction == "BUY" else "🔴"
 
         self.send_message(
             f"{arrow} *SINYAL {direction} — XAUUSD*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"💰 Entry : `{entry:.2f}`\n"
-            f"🎯 TP    : `{tp:.2f}`  (+{ATR_TP_MULTIPLIER}×ATR)\n"
-            f"🛑 SL    : `{sl:.2f}`  (-{ATR_SL_MULTIPLIER}×ATR)\n"
+            f"🎯 TP    : `{tp:.2f}`  \\(\\+{ATR_TP_MULTIPLIER}×ATR\\)\n"
+            f"🛑 SL    : `{sl:.2f}`  \\(\\-{ATR_SL_MULTIPLIER}×ATR\\)\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 Ensemble: `{score_used}/10` | ML: `{ml_proba:.0%}`\n"
-            f"📏 ATR: `{atr:.2f}` | ⏰ `{datetime.now(WIB).strftime('%H:%M WIB')}`"
+            f"📊 Ensemble: `{score_used}/{total}` votes \\| ML: `{ml_proba:.0%}`\n"
+            f"📏 ATR: `{atr:.2f}` \\| 📈 Tren: `{'Bullish' if trend_bull else 'Bearish'}` \\| ⏰ `{datetime.now(WIB).strftime('%H:%M WIB')}`"
         )
 
         trade_data = {
@@ -287,20 +316,22 @@ class SignalGenerator:
             "entry_price":    entry,
             "tp":             tp,
             "sl":             sl,
-            "rsi":            self._safe(last, "RSI_14"),
-            "macd_hist":      self._safe(last, "MACDh_12_26_9"),
+            "rsi":            safe_get(last, "RSI_14"),
+            "macd_hist":      safe_get(last, "MACDh_12_26_9"),
             "atr":            atr,
-            "bb_pos":         self._safe(last, "bb_pos"),
-            "ema_signal":     int(self._safe(last, "ema_cross", 0)),
-            "stoch_k":        self._safe(last, "STOCHk_14_3_3"),
-            "stoch_d":        self._safe(last, "STOCHd_14_3_3"),
-            "cci":            self._safe(last, "CCI_20_0.015"),
-            "willr":          self._safe(last, "WILLR_14"),
-            "mfi":            self._safe(last, "MFI_14"),
-            "bullish_cdl":    int(self._safe(last, "bullish_cdl", 0)),
-            "bearish_cdl":    int(self._safe(last, "bearish_cdl", 0)),
+            "bb_pos":         safe_get(last, "bb_pos"),
+            "ema_signal":     int(safe_get(last, "ema_cross", 0)),
+            "stoch_k":        safe_get(last, "STOCHk_14_3_3"),
+            "stoch_d":        safe_get(last, "STOCHd_14_3_3"),
+            "cci":            safe_get(last, "CCI_20_0.015"),
+            "willr":          safe_get(last, "WILLR_14"),
+            "mfi":            safe_get(last, "MFI_14"),
+            "bullish_cdl":    int(safe_get(last, "bullish_cdl", 0)),
+            "bearish_cdl":    int(safe_get(last, "bearish_cdl", 0)),
             "ensemble_score": score_used,
             "ml_proba":       ml_proba,
+            "source":         "live",
+            "trend_bull":     trend_bull,
         }
         trade_id = log_trade(trade_data)
 
@@ -314,68 +345,9 @@ class SignalGenerator:
         set_active_signal({**self._active_trade, "timestamp": trade_data["timestamp"]})
 
         logger.info(
-            f"Sinyal {direction}: Entry={entry:.2f} TP={tp:.2f} SL={sl:.2f}"
+            f"Sinyal {direction}: Entry={entry:.2f} TP={tp:.2f} SL={sl:.2f} "
+            f"Ensemble={score_used}/{total} ML={ml_proba:.0%}"
         )
-
-    # ─── Ensemble voting (0–10 per side) ─────────────────────────────────────
-
-    def _ensemble_vote(self, row: pd.Series) -> tuple:
-        bull, bear = 0, 0
-
-        def v(val):
-            return not (isinstance(val, float) and np.isnan(val))
-
-        # 1. EMA10 vs EMA21
-        if row.get("ema_cross", 0) == 1: bull += 1
-        else:                             bear += 1
-
-        # 2. EMA21 vs EMA50
-        e21, e50 = row.get("EMA_21", np.nan), row.get("EMA_50", np.nan)
-        if v(e21) and v(e50):
-            if e21 > e50: bull += 1
-            else:         bear += 1
-
-        # 3. Harga vs SMA50
-        sma50 = row.get("SMA_50", np.nan)
-        close = row.get("close",  np.nan)
-        if v(sma50) and v(close):
-            if close > sma50: bull += 1
-            else:             bear += 1
-
-        # 4. MACD histogram
-        macdh = row.get("MACDh_12_26_9", np.nan)
-        if v(macdh):
-            if macdh > 0: bull += 1
-            else:         bear += 1
-
-        # 5. RSI
-        rsi = row.get("RSI_14", 50)
-        if v(rsi):
-            if rsi < 40:   bull += 1
-            elif rsi > 60: bear += 1
-
-        # 6. Stochastic
-        stoch_k = row.get("STOCHk_14_3_3", 50)
-        if v(stoch_k):
-            if stoch_k < 25:   bull += 1
-            elif stoch_k > 75: bear += 1
-
-        # 7. Bollinger Band position
-        bb = row.get("bb_pos", 0.5)
-        if v(bb):
-            if bb < 0.2:   bull += 1
-            elif bb > 0.8: bear += 1
-
-        # 8. Parabolic SAR
-        sar_bull = row.get("sar_bull", 0)
-        if sar_bull == 1: bull += 1
-        else:             bear += 1
-
-        # 9. Candlestick patterns
-        if row.get("bullish_cdl", 0) > 0: bull += 1
-        if row.get("bearish_cdl", 0) > 0: bear += 1
-
-        return bull, bear
 
     # ─── Auto retrain ─────────────────────────────────────────────────────────
 
@@ -385,27 +357,21 @@ class SignalGenerator:
         if len(trades) < 20:
             return
 
-        wins   = sum(1 for t in trades if t["outcome"] == "WIN")
-        losses = sum(1 for t in trades if t["outcome"] == "LOSE")
-        total  = len(trades)
+        live_trades = [t for t in trades if t.get("source", "live") == "live"]
+        wins   = sum(1 for t in live_trades if t["outcome"] == "WIN")
+        losses = sum(1 for t in live_trades if t["outcome"] == "LOSE")
+        total  = len(live_trades)
 
-        self.model.retrain(trades)
-        actual_wr = wins / total * 100
-        log_evaluation(actual_wr, total, wins, losses)
+        self.model.retrain(trades)   # latih dengan semua data (live + backtest warmup)
+        actual_wr = wins / total * 100 if total > 0 else 0
+        log_evaluation(actual_wr, total, wins, losses, source="live")
 
         self.send_message(
-            f"🔄 *Auto-Evaluasi & Retrain Selesai*\n"
+            f"🔄 *Auto\\-Evaluasi & Retrain Selesai*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📊 Total  : `{total}` trade\n"
-            f"✅ Menang : `{wins}`\n"
-            f"❌ Kalah  : `{losses}`\n"
-            f"📈 Win Rate: `{actual_wr:.1f}%`\n"
-            f"🤖 Model dilatih ulang & disimpan ke disk"
+            f"📊 Trade live : `{total}`\n"
+            f"✅ Menang     : `{wins}`\n"
+            f"❌ Kalah      : `{losses}`\n"
+            f"📈 Win Rate   : `{actual_wr:.1f}%`\n"
+            f"🤖 Model dilatih ulang & disimpan"
         )
-
-    @staticmethod
-    def _safe(row, key, default=np.nan):
-        val = row.get(key, default)
-        if isinstance(val, float) and np.isnan(val):
-            return default
-        return val
