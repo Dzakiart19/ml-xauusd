@@ -20,6 +20,7 @@ from config import (
     ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER, ATR_MIN_THRESHOLD,
     MIN_ENSEMBLE_RATIO, ML_PROBA_THRESHOLD,
     SIGNAL_CHECK_INTERVAL, RETRAIN_EVERY,
+    BUY_RSI_MAX, SELL_RSI_MIN, SELL_STOCH_MIN,
 )
 from ensemble import ensemble_vote, safe_get
 from indicators import calculate_indicators, extract_features
@@ -246,8 +247,7 @@ class SignalGenerator:
         bull_ratio = bull / total
         bear_ratio = bear / total
 
-        # ── Trend filter: SMA200 ───────────────────────────────────────────
-        # Hanya BUY jika harga di atas SMA200, hanya SELL jika di bawah
+        # ── SMA200: simpan sebagai fitur ML, bukan gate arah ─────────────
         sma200     = safe_get(last, "SMA_200", np.nan)
         trend_bull = 1 if (not np.isnan(sma200) and close > sma200) else 0
 
@@ -260,12 +260,24 @@ class SignalGenerator:
             logger.debug(f"ATR terlalu kecil ({atr:.3f}) — skip sinyal.")
             return
 
-        # ── Tentukan arah berdasarkan ensemble + trend ─────────────────────
+        # ── Konfirmasi arah: RSI + MACD + Stoch (data-driven) ────────────
+        # SMA200 dilepas sebagai gate karena bukti data: BUY di atas SMA200
+        # memiliki WR 23.5% vs SELL di bawah SMA200 WR 43.8% → SMA200 gate
+        # memperburuk BUY bukan memperbaikinya.
+        rsi     = float(safe_get(last, "RSI_14",        50.0))
+        macd_h  = float(safe_get(last, "MACDh_12_26_9",  0.0))
+        stoch_k = float(safe_get(last, "STOCHk_14_3_3", 50.0))
+
         direction = None
-        if bull_ratio >= MIN_ENSEMBLE_RATIO and trend_bull == 1:
-            direction = "BUY"
-        elif bear_ratio >= MIN_ENSEMBLE_RATIO and trend_bull == 0:
+        # SELL: hanya saat harga di bawah SMA200 (tren turun lokal) + RSI/stoch
+        # aman — ini filter yang terbukti bagus (WR 43.8%)
+        if bear_ratio >= MIN_ENSEMBLE_RATIO and trend_bull == 0 \
+                and rsi > SELL_RSI_MIN and stoch_k > SELL_STOCH_MIN:
             direction = "SELL"
+        # BUY: tanpa SMA200 gate (karena BUY di atas SMA200 justru buruk),
+        # ganti dengan RSI oversold nyata + MACD momentum positif
+        elif bull_ratio >= MIN_ENSEMBLE_RATIO and rsi < BUY_RSI_MAX and macd_h > 0:
+            direction = "BUY"
 
         if direction is None:
             return

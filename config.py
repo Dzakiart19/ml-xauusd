@@ -34,7 +34,15 @@ ATR_MIN_THRESHOLD = 0.5
 
 # Minimum rasio skor ensemble (dari total vote yang aktif)
 # 0.65 = butuh 65% suara majority sebelum sinyal dikirim
-MIN_ENSEMBLE_RATIO = 0.65
+MIN_ENSEMBLE_RATIO = 0.70   # naik dari 0.65 — filter score 4 (28.8% WR)
+
+# ─── Filter konfirmasi arah sinyal ────────────────────────────────────────────
+# BUY hanya jika RSI < nilai ini (tidak sedang overbought / extended ke atas)
+BUY_RSI_MAX    = 45   # BUY hanya saat RSI benar-benar oversold (< 45)
+# SELL hanya jika RSI > nilai ini (tidak extreme oversold — bounce risk)
+SELL_RSI_MIN   = 25
+# SELL hanya jika stoch_k > nilai ini (jangan short saat sudah oversold)
+SELL_STOCH_MIN = 20
 
 # Minimum probabilitas ML untuk konfirmasi sinyal
 ML_PROBA_THRESHOLD = 0.58

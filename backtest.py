@@ -17,6 +17,7 @@ import pandas as pd
 from config import (
     ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER,
     MIN_ENSEMBLE_RATIO, LABEL_LOOKAHEAD, ATR_MIN_THRESHOLD,
+    BUY_RSI_MAX, SELL_RSI_MIN, SELL_STOCH_MIN,
 )
 from database import log_trade, update_trade_outcome, count_backtest_trades
 from ensemble import ensemble_vote, safe_get
@@ -86,15 +87,23 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
         row  = df_ind.iloc[i]
         bull, bear, total = ensemble_vote(row)
 
-        # Trend filter: hanya trade searah tren makro (SMA200)
+        # SMA200 disimpan sebagai fitur ML (bukan gate arah)
         trend_bull = int(safe_get(row, "trend_bull", 0))
+
+        # Konfirmasi arah: RSI + MACD + Stoch (data-driven, bukan SMA200)
+        rsi     = float(safe_get(row, "RSI_14",         50.0))
+        macd_h  = float(safe_get(row, "MACDh_12_26_9",   0.0))
+        stoch_k = float(safe_get(row, "STOCHk_14_3_3",  50.0))
 
         direction = None
         score     = 0
-        if bull / total >= MIN_ENSEMBLE_RATIO and trend_bull == 1:
-            direction, score = "BUY",  bull
-        elif bear / total >= MIN_ENSEMBLE_RATIO and trend_bull == 0:
+        # SELL: hanya saat harga di bawah SMA200 (terbukti WR 43.8%) + proteksi RSI/stoch
+        if bear / total >= MIN_ENSEMBLE_RATIO and trend_bull == 0 \
+                and rsi > SELL_RSI_MIN and stoch_k > SELL_STOCH_MIN:
             direction, score = "SELL", bear
+        # BUY: RSI harus benar-benar oversold (< 45) + MACD momentum positif
+        elif bull / total >= MIN_ENSEMBLE_RATIO and rsi < BUY_RSI_MAX and macd_h > 0:
+            direction, score = "BUY", bull
 
         if direction is None:
             continue
