@@ -344,6 +344,7 @@ class SignalGenerator:
             "ml_proba":       ml_proba,
             "source":         "live",
             "trend_bull":     trend_bull,
+            "sar_bull":       int(safe_get(last, "sar_bull", 0)),
         }
         trade_id = log_trade(trade_data)
 

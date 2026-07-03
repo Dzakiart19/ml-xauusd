@@ -289,7 +289,7 @@ async def _process_queue(ctx: ContextTypes.DEFAULT_TYPE):
                 await ctx.bot.send_message(
                     chat_id=cid,
                     text=text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.MARKDOWN_V2,
                 )
             except RetryAfter as e:
                 logger.warning(f"Rate limit — tunggu {e.retry_after}s")

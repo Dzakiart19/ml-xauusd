@@ -150,6 +150,7 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
             "ml_proba":        0.5,   # tidak ada ML saat backtest
             "source":          "backtest",
             "trend_bull":      trend_bull,
+            "sar_bull":        int(safe_get(row, "sar_bull", 0)),
         }
 
         trade_id = log_trade(trade_data)

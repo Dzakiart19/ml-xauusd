@@ -7,7 +7,7 @@ import os
 # ─── Deriv WebSocket ───────────────────────────────────────────────────────────
 DERIV_WS_URL   = "wss://ws.binaryws.com/websockets/v3?app_id=1089"
 DERIV_SYMBOL   = "frxXAUUSD"
-CANDLE_COUNT   = 3500         # ~12 hari data @5-menit (12×288=3456)
+CANDLE_COUNT   = 3500         # request 3500; Deriv memberikan maks ~2710 candle @5-menit (~9.4 hari, tergantung weekend/market close)
 GRANULARITY    = 300          # 5 menit (dalam detik)
 
 # ─── Telegram ─────────────────────────────────────────────────────────────────

@@ -154,7 +154,7 @@ class XAUModel:
                 'WILLR_14':         t.get('willr',       np.nan),
                 'bullish_cdl':      t.get('bullish_cdl', 0),
                 'bearish_cdl':      t.get('bearish_cdl', 0),
-                'sar_bull':         0,   # tidak disimpan di DB — default 0
+                'sar_bull':         t.get('sar_bull', 0),
                 'trend_bull':       t.get('trend_bull',  0),
             }
             row = [col_map.get(feat, np.nan) for feat in feature_names]

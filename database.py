@@ -48,7 +48,8 @@ def init_db():
                 ensemble_score INTEGER,
                 ml_proba      REAL,
                 source        TEXT    DEFAULT 'live',
-                trend_bull    INTEGER DEFAULT 0
+                trend_bull    INTEGER DEFAULT 0,
+                sar_bull      INTEGER DEFAULT 0
             )
         """)
         conn.execute("""
@@ -67,6 +68,7 @@ def init_db():
         # ── Migrasi: tambah kolom baru jika belum ada (database lama) ──
         _migrate_add_column(conn, "trades",      "source",     "TEXT    DEFAULT 'live'")
         _migrate_add_column(conn, "trades",      "trend_bull", "INTEGER DEFAULT 0")
+        _migrate_add_column(conn, "trades",      "sar_bull",   "INTEGER DEFAULT 0")
         _migrate_add_column(conn, "evaluations", "source",     "TEXT    DEFAULT 'live'")
 
         # ── Normalisasi: row lama yang source=NULL → 'live' (satu kali) ──
@@ -101,12 +103,12 @@ def log_trade(trade: dict) -> int:
                 timestamp, direction, entry_price, tp, sl,
                 rsi, macd_hist, atr, bb_pos, ema_signal,
                 stoch_k, stoch_d, cci, willr, mfi,
-                bullish_cdl, bearish_cdl, ensemble_score, ml_proba, source, trend_bull
+                bullish_cdl, bearish_cdl, ensemble_score, ml_proba, source, trend_bull, sar_bull
             ) VALUES (
                 :timestamp, :direction, :entry_price, :tp, :sl,
                 :rsi, :macd_hist, :atr, :bb_pos, :ema_signal,
                 :stoch_k, :stoch_d, :cci, :willr, :mfi,
-                :bullish_cdl, :bearish_cdl, :ensemble_score, :ml_proba, :source, :trend_bull
+                :bullish_cdl, :bearish_cdl, :ensemble_score, :ml_proba, :source, :trend_bull, :sar_bull
             )
         """, trade)
         conn.commit()
