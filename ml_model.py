@@ -3,6 +3,7 @@ Model Machine Learning (Random Forest) untuk prediksi sinyal.
 Thread-safe: semua akses model dilindungi oleh model_lock.
 """
 
+import json
 import logging
 import os
 import threading
@@ -17,7 +18,8 @@ from config import (
     RF_N_ESTIMATORS, RF_MAX_DEPTH,
     MODEL_FILE, SCALER_FILE,
     ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER,
-    LABEL_LOOKAHEAD,
+    LABEL_LOOKAHEAD, SPREAD_ESTIMATE,
+    FEATURE_IMPORTANCE_FILE,
 )
 from indicators import get_feature_names, extract_features
 
@@ -90,7 +92,9 @@ class XAUModel:
 
             outcome = np.nan
             for j in range(i + 1, i + 1 + LABEL_LOOKAHEAD):
-                if highs[j] >= tp:
+                # Fix 2: terapkan spread ke TP agar label lebih realistis
+                # BUY entry sesungguhnya di ask (mid + spread), TP lebih sulit dicapai
+                if highs[j] >= tp + SPREAD_ESTIMATE:
                     outcome = 1   # WIN
                     break
                 if lows[j] <= sl:
@@ -127,6 +131,7 @@ class XAUModel:
                 acc = scores.mean()
 
             logger.info(f"Pelatihan awal selesai. Akurasi CV: {acc:.2%}")
+            self._save_feature_importance()
             self.save()
             return acc
         except Exception as e:
@@ -181,11 +186,37 @@ class XAUModel:
                 win_rate = y.mean() * 100
 
             logger.info(f"Retrain selesai. Win rate data latih: {win_rate:.1f}%")
+            self._save_feature_importance()
             self.save()
             return win_rate
         except Exception as e:
             logger.error(f"Retrain gagal: {e}")
             return 0.0
+
+    # ─── Feature Importance (Fix 6) ───────────────────────────────────────────
+
+    def _save_feature_importance(self):
+        """
+        Simpan feature importance ke JSON setelah setiap training/retrain.
+        Membantu identifikasi fitur mana yang paling prediktif vs noise.
+        """
+        try:
+            if not hasattr(self.model, 'feature_importances_'):
+                return
+            names = get_feature_names()
+            importances = {
+                name: round(float(imp), 4)
+                for name, imp in zip(names, self.model.feature_importances_)
+            }
+            importances_sorted = dict(
+                sorted(importances.items(), key=lambda x: x[1], reverse=True)
+            )
+            with open(FEATURE_IMPORTANCE_FILE, 'w') as f:
+                json.dump(importances_sorted, f, indent=2)
+            top3 = list(importances_sorted.items())[:3]
+            logger.info(f"Feature importance disimpan. Top 3: {top3}")
+        except Exception as e:
+            logger.warning(f"Gagal simpan feature importance: {e}")
 
     # ─── Prediksi ─────────────────────────────────────────────────────────────
 

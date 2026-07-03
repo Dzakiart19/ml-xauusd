@@ -47,7 +47,7 @@ def _format_uptime() -> str:
 
 
 # ─── Queue pesan keluar (thread-safe) ─────────────────────────────────────────
-_msg_queue: queue.Queue = queue.Queue()
+_msg_queue: queue.Queue = queue.Queue(maxsize=100)
 
 # ─── Sinyal aktif (diupdate oleh SignalGenerator) ─────────────────────────────
 _active_signal: dict | None = None
@@ -66,8 +66,19 @@ def get_active_signal() -> dict | None:
 
 
 def enqueue_message(text: str):
-    """Dipanggil dari thread mana saja untuk broadcast ke semua chat terdaftar."""
-    _msg_queue.put(text)
+    """
+    Dipanggil dari thread mana saja untuk broadcast ke semua chat terdaftar.
+    Jika queue penuh (>100 pesan), pesan terlama dibuang untuk memberi ruang.
+    """
+    try:
+        _msg_queue.put_nowait(text)
+    except queue.Full:
+        logger.warning("Queue pesan penuh — buang pesan terlama, masukkan pesan baru.")
+        try:
+            _msg_queue.get_nowait()
+            _msg_queue.put_nowait(text)
+        except Exception:
+            pass
 
 
 # ─── Manajemen chat_id ────────────────────────────────────────────────────────

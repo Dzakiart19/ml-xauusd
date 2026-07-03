@@ -2,8 +2,8 @@
 Generator sinyal trading XAUUSD.
 - Loop setiap SIGNAL_CHECK_INTERVAL detik
 - Hitung ulang indikator HANYA saat candle baru close (candles_dirty flag)
-- Lacak sinyal aktif (TP/SL) via tick real-time
-- Auto-retrain setiap RETRAIN_EVERY trade live selesai
+- Lacak sinyal aktif (TP/SL) via tick real-time; force-close setelah MAX_TRADE_CANDLES
+- Auto-retrain dengan jadwal adaptif berdasarkan jumlah live trade
 """
 
 import logging
@@ -21,6 +21,7 @@ from config import (
     MIN_ENSEMBLE_RATIO, ML_PROBA_THRESHOLD,
     SIGNAL_CHECK_INTERVAL, RETRAIN_EVERY,
     BUY_RSI_MAX, SELL_RSI_MIN, SELL_STOCH_MIN,
+    GRANULARITY, MAX_TRADE_CANDLES, INDICATOR_WINDOW,
 )
 from ensemble import ensemble_vote, safe_get
 from indicators import calculate_indicators, extract_features
@@ -34,6 +35,21 @@ from backtest import run_backtest
 from bot import set_active_signal
 
 logger = logging.getLogger(__name__)
+
+
+def _get_retrain_interval(live_count: int) -> int:
+    """
+    Fix 4: Jadwal retrain adaptif berdasarkan jumlah live trade terkumpul.
+    - Fase awal (< 50 trade): retrain setiap 10 trade — adaptasi cepat
+    - Fase menengah (50–199): retrain setiap 25 trade
+    - Fase stabil (≥ 200): retrain setiap 50 trade
+    """
+    if live_count < 50:
+        return 10
+    elif live_count < 200:
+        return 25
+    else:
+        return 50
 
 
 class SignalGenerator:
@@ -156,14 +172,20 @@ class SignalGenerator:
 
             time.sleep(SIGNAL_CHECK_INTERVAL)
 
-    # ─── Update indikator ─────────────────────────────────────────────────────
+    # ─── Update indikator (Fix 7: inkremental — hanya INDICATOR_WINDOW candle terakhir) ──
 
     def _recalculate_indicators(self):
         with self.state_lock:
             df = self.shared_state.get("candles")
             if df is None or df.empty:
                 return
-            df_copy = df.copy()
+            # Ambil hanya candle terakhir secukupnya — hemat CPU, akurasi tetap terjaga
+            # 600 candle cukup untuk semua indikator period ≤ 200 + buffer konvergensi EWM
+            df_copy = (
+                df.iloc[-INDICATOR_WINDOW:].copy()
+                if len(df) > INDICATOR_WINDOW
+                else df.copy()
+            )
 
         try:
             df_ind = calculate_indicators(df_copy)
@@ -188,6 +210,31 @@ class SignalGenerator:
         tp        = trade["tp"]
         sl        = trade["sl"]
 
+        # ── Fix 3: Timeout — force-close jika trade terlalu lama tidak resolusi ──
+        open_time = trade.get("open_time")
+        if open_time is not None:
+            elapsed_candles = (datetime.now(WIB) - open_time).total_seconds() / GRANULARITY
+            if elapsed_candles >= MAX_TRADE_CANDLES:
+                pips = abs(price - entry) / 0.01
+                max_minutes = MAX_TRADE_CANDLES * GRANULARITY // 60
+                self.send_message(
+                    f"⏰ *TIMEOUT* — Trade Ditutup Paksa\\!\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Arah   : `{direction}` XAUUSD\n"
+                    f"Entry  : `{entry:.2f}`\n"
+                    f"Harga  : `{price:.2f}`\n"
+                    f"Durasi : `>{max_minutes}` menit tanpa resolusi TP/SL\n"
+                    f"Pips   : `{pips:.0f}` \\(tidak dihitung sebagai WIN/LOSE\\)"
+                )
+                if self._trade_db_id:
+                    update_trade_outcome(self._trade_db_id, "TIMEOUT", pips)
+                self._active_trade = None
+                self._trade_db_id  = None
+                set_active_signal(None)
+                logger.info(f"Trade {direction} timeout setelah {elapsed_candles:.1f} candle.")
+                return
+
+        # ── Cek TP / SL ────────────────────────────────────────────────────
         hit = None
         if direction == "BUY":
             if price >= tp:   hit = "WIN"
@@ -199,7 +246,7 @@ class SignalGenerator:
         if not hit:
             return
 
-        pips = abs(price - entry) / 0.01   # 1 pip XAUUSD = $0.01
+        pips  = abs(price - entry) / 0.01   # 1 pip XAUUSD = $0.01
         sign  = "+" if hit == "WIN" else "-"
         emoji = "✅" if hit == "WIN" else "❌"
 
@@ -219,9 +266,10 @@ class SignalGenerator:
         self._trade_db_id  = None
         set_active_signal(None)
 
-        # Trigger retrain berdasarkan trade LIVE saja
+        # ── Fix 4: Retrain adaptif — interval menyesuaikan jumlah live trade ──
         live_done = count_completed_live_trades()
-        if live_done > 0 and live_done % RETRAIN_EVERY == 0:
+        interval  = _get_retrain_interval(live_done)
+        if live_done > 0 and live_done % interval == 0:
             threading.Thread(
                 target=self._auto_retrain, daemon=True, name="Retrain"
             ).start()
@@ -353,6 +401,7 @@ class SignalGenerator:
             "entry_price": entry,
             "tp":          tp,
             "sl":          sl,
+            "open_time":   datetime.now(WIB),   # Fix 3: untuk tracking timeout
         }
         self._trade_db_id = trade_id
         set_active_signal({**self._active_trade, "timestamp": trade_data["timestamp"]})

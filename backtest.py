@@ -18,6 +18,7 @@ from config import (
     ATR_TP_MULTIPLIER, ATR_SL_MULTIPLIER,
     MIN_ENSEMBLE_RATIO, LABEL_LOOKAHEAD, ATR_MIN_THRESHOLD,
     BUY_RSI_MAX, SELL_RSI_MIN, SELL_STOCH_MIN,
+    BACKTEST_HOLDOUT, SPREAD_ESTIMATE,
 )
 from database import log_trade, update_trade_outcome, count_backtest_trades
 from ensemble import ensemble_vote, safe_get
@@ -42,12 +43,14 @@ def _simulate_outcome(df: pd.DataFrame, entry_idx: int,
     end_idx = min(entry_idx + 1 + LABEL_LOOKAHEAD, len(df))
     for j in range(entry_idx + 1, end_idx):
         if direction == "BUY":
-            if highs[j] >= tp:
+            # Fix 2: TP harus diraih di atas spread (entry sesungguhnya = ask = mid + spread)
+            if highs[j] >= tp + SPREAD_ESTIMATE:
                 return "WIN",  abs(tp    - entry) / 0.01, j
             if lows[j]  <= sl:
                 return "LOSE", abs(entry - sl)    / 0.01, j
         else:  # SELL
-            if lows[j]  <= tp:
+            # Fix 2: TP harus diraih di bawah spread (entry sesungguhnya = bid = mid - spread)
+            if lows[j]  <= tp - SPREAD_ESTIMATE:
                 return "WIN",  abs(entry - tp)    / 0.01, j
             if highs[j] >= sl:
                 return "LOSE", abs(sl    - entry) / 0.01, j
@@ -74,8 +77,10 @@ def run_backtest(df_ind: pd.DataFrame) -> int:
     n      = len(df_ind)
 
     # Mulai dari candle ke-210 supaya SMA200 + indikator sudah stabil
+    # end_idx dikurangi BACKTEST_HOLDOUT agar candle terbaru tidak dipakai untuk training
+    # (Fix 1: cegah data leakage — candle terakhir reserved untuk sinyal live awal)
     start_idx    = min(210, n // 3)
-    end_idx      = n - LABEL_LOOKAHEAD
+    end_idx      = n - max(LABEL_LOOKAHEAD, BACKTEST_HOLDOUT)
     signal_count = 0
     active_until = -1
     _results     = []   # track outcome setiap trade untuk laporan akurat
